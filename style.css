@@ -17,9 +17,7 @@ body {
 .car-bg {
     position: fixed;
     bottom: -24%;
-    /* sidebar(280px) + gap(20px) + left-pad(20px) = 320px; center of right panel */
-    left: calc(320px + (100vw - 340px) / 2);
-    transform: translateX(-50%);
+    right: -100px;              /* ← replaces left + transform */
     width: calc(100vw - 340px);
     height: auto;
     z-index: 6;
