@@ -16,15 +16,15 @@ body {
 /* CAR IMAGE BACKGROUND */
 .car-bg {
     position: fixed;
-    bottom: -24%;
-    left: 70%;
-    transform: translateX(-50%);
+    bottom: 0;
+    right: 0;
     width: 72%;
     height: auto;
     z-index: 4;
     pointer-events: none;
     mix-blend-mode: screen;
-    opacity: 0.85;
+    opacity: 0.75;
+
 }
 
 .dashboard-container {
@@ -256,3 +256,18 @@ h2 {
 @keyframes spin { 100% { transform: rotate(360deg); } }
 @keyframes scan { 0% { top: 0%; } 50% { top: 100%; } 100% { top: 0%; } }
 @keyframes pulseGlow { from { transform: scale(0.95); opacity: 0.5; } to { transform: scale(1.05); opacity: 0.8; } }
+
+/* SVG icons in headings */
+h2 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+h2 svg {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    color: #a855f7;
+    filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
+}
