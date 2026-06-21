@@ -300,6 +300,9 @@ function updateUIElements(data) {
                                         "System Environment Normal";
     }
 
+    // 8. Smart Charging
+    updateSmartCharging(voltage, temperature, batteryLevel, data.status);
+
     // 7. Browser push notifications based on status
     if (data.status === "ALERT") {
         sendNotification(
@@ -317,4 +320,196 @@ function updateUIElements(data) {
         // Reset so normal→alert triggers again
         if (lastNotifiedStatus !== null) lastNotifiedStatus = null;
     }
+}
+// ---------------------------------------------------------------
+// SMART CHARGING ENGINE
+// ---------------------------------------------------------------
+
+/**
+ * Determines the optimal charging target based on battery chemistry,
+ * current SOH, temperature stress, and usage pattern.
+ *
+ * Rules (Li-ion best practices):
+ *  - Never charge to 100% — stops at 80% for longevity (unless critically low)
+ *  - If battery < 20% → urgent: charge to 80%
+ *  - If temp > 40°C   → delay: thermal stress charging is harmful
+ *  - If temp < 5°C    → slow charge only; limit target to 70%
+ *  - If battery 20–60% → top up to 80% (sweet spot)
+ *  - If battery > 80% → no charge needed
+ */
+function updateSmartCharging(voltage, temperature, batteryLevel, status) {
+    const recEl        = document.getElementById('charge-recommendation');
+    const iconEl       = document.getElementById('charge-icon');
+    const cardRec      = document.getElementById('charge-recommendation-card');
+    const targetLvlEl  = document.getElementById('charge-target-level');
+    const targetResEl  = document.getElementById('charge-target-reason');
+    const timeEl       = document.getElementById('charge-time-est');
+    const timeNoteEl   = document.getElementById('charge-time-note');
+    const thermalEl    = document.getElementById('charge-thermal-status');
+    const thermalNoteEl= document.getElementById('charge-thermal-note');
+    const thermalCard  = document.getElementById('charge-thermal-card');
+    const tipsList     = document.getElementById('charge-tips-list');
+    const longevityBar = document.getElementById('charge-longevity-bar');
+    const longevityPct = document.getElementById('charge-longevity-pct');
+
+    if (!recEl) return;
+
+    // ── Derive state ──────────────────────────────────────────────
+    const isHot        = temperature > 40;
+    const isCold       = temperature < 5;
+    const isCritical   = batteryLevel < 20;
+    const isLow        = batteryLevel >= 20 && batteryLevel < 40;
+    const isMid        = batteryLevel >= 40 && batteryLevel <= 80;
+    const isFull       = batteryLevel > 80;
+    const voltageStress= voltage > 4.0 || voltage < 3.1;
+
+    // ── Recommendation ────────────────────────────────────────────
+    let recommendation, icon, statusClass, targetLevel, targetReason, tips = [];
+
+    if (isHot) {
+        recommendation = 'Delay Charging — High Temperature';
+        icon = '🌡️';
+        statusClass = 'charge-status-alert';
+        targetLevel = '--';
+        targetReason = 'Thermal stress at ' + temperature.toFixed(1) + '°C — wait for cool-down';
+        tips.push('Charging above 40°C accelerates electrode degradation by up to 2× (Arrhenius effect).');
+        tips.push('Park in shade or a cool area. Resume charging once temp drops below 35°C.');
+        tips.push('If charging is urgent, limit to 50% to minimise heat-of-reaction.');
+    } else if (isCold) {
+        recommendation = 'Slow Charge Only — Low Temperature';
+        icon = '❄️';
+        statusClass = 'charge-status-warn';
+        targetLevel = '70%';
+        targetReason = 'Cold lithium plating risk — capped at 70%';
+        tips.push('Charging below 5°C can cause metallic lithium plating on the anode, permanently reducing capacity.');
+        tips.push('If possible, pre-condition the battery (run climate control while plugged in) before charging.');
+        tips.push('Reduce charge rate to ≤ 0.3C for safe cold-weather operation.');
+    } else if (isCritical) {
+        recommendation = 'Charge Now — Battery Critical';
+        icon = '🔴';
+        statusClass = 'charge-status-alert';
+        targetLevel = '80%';
+        targetReason = 'Emergency top-up; stop at 80% to preserve cycle life';
+        tips.push('Deep discharge (< 20%) stresses the anode and accelerates capacity fade.');
+        tips.push('Set a charge limit alert at 80% to avoid overcharging once recovered.');
+        tips.push('After charging, recalibrate your range estimates — deep cycles affect SOH accuracy.');
+    } else if (isFull) {
+        recommendation = 'No Charging Needed';
+        icon = '✅';
+        statusClass = 'charge-status-ok';
+        targetLevel = batteryLevel.toFixed(0) + '%';
+        targetReason = 'Battery is in the optimal 80–100% range';
+        tips.push('Avoid leaving the vehicle plugged in at 100% for extended periods — it stresses the cell chemistry.');
+        tips.push('Consider setting a charge limit of 80% for daily use to extend long-term battery health.');
+    } else if (isLow) {
+        recommendation = 'Charge Soon — Level Low';
+        icon = '🟡';
+        statusClass = 'charge-status-warn';
+        targetLevel = '80%';
+        targetReason = 'Top up to 80% sweet spot for longevity';
+        tips.push('The 20–80% charge window minimises stress on both cathode and anode materials.');
+        tips.push('Charging at moderate rates (0.5–1C) in this range produces the least heat.');
+    } else {
+        recommendation = 'Optional Top-Up Available';
+        icon = '⚡';
+        statusClass = 'charge-status-ok';
+        targetLevel = '80%';
+        targetReason = 'Maintain 80% ceiling for daily cycle health';
+        tips.push('You\'re in the healthy mid-range. Only charge if you need the range soon.');
+        tips.push('Every unnecessary charge cycle contributes to cumulative SOH degradation.');
+    }
+
+    // Voltage stress tip
+    if (voltageStress) {
+        tips.push('Voltage is near operating limits (' + voltage.toFixed(2) + 'V). Avoid rapid charging until stabilised.');
+    }
+
+    // ── Estimated time to target ──────────────────────────────────
+    // Assumes a typical 7.2 kW AC onboard charger, 75 kWh pack, efficiency 90%
+    const PACK_KWH      = 75;
+    const CHARGER_KW    = 7.2;
+    const EFFICIENCY    = 0.90;
+    const targetLvlNum  = parseFloat(targetLevel) || batteryLevel;
+    const deltaPercent  = Math.max(0, targetLvlNum - batteryLevel);
+    const energyNeeded  = (deltaPercent / 100) * PACK_KWH;
+    const chargeHrs     = energyNeeded / (CHARGER_KW * EFFICIENCY);
+    const chargeMins    = Math.round(chargeHrs * 60);
+
+    let timeText, timeNote;
+    if (deltaPercent <= 0) {
+        timeText = 'No charge needed';
+        timeNote = 'Already at or above target';
+    } else if (isHot || isCold) {
+        timeText = 'Paused';
+        timeNote = 'Waiting on thermal conditions';
+    } else if (chargeMins < 60) {
+        timeText = chargeMins + ' min';
+        timeNote = 'At 7.2 kW AC (Level 2)';
+    } else {
+        const hrs  = Math.floor(chargeHrs);
+        const mins = Math.round((chargeHrs - hrs) * 60);
+        timeText = hrs + 'h ' + (mins > 0 ? mins + 'm' : '');
+        timeNote = 'At 7.2 kW AC (Level 2)';
+    }
+
+    // ── Thermal status ────────────────────────────────────────────
+    let thermalStatus, thermalNote, thermalClass;
+    if (isHot) {
+        thermalStatus = 'Too Hot to Charge';
+        thermalNote   = temperature.toFixed(1) + '°C — above 40°C safe limit';
+        thermalClass  = 'charge-status-alert';
+    } else if (isCold) {
+        thermalStatus = 'Too Cold — Reduced Rate';
+        thermalNote   = temperature.toFixed(1) + '°C — lithium plating risk below 5°C';
+        thermalClass  = 'charge-status-warn';
+    } else if (temperature > 30) {
+        thermalStatus = 'Warm — Monitor Temp';
+        thermalNote   = temperature.toFixed(1) + '°C — mild thermal stress present';
+        thermalClass  = 'charge-status-warn';
+    } else {
+        thermalStatus = 'Optimal Charging Temperature';
+        thermalNote   = temperature.toFixed(1) + '°C — within 15–30°C ideal window';
+        thermalClass  = 'charge-status-ok';
+    }
+
+    // ── Longevity score ───────────────────────────────────────────
+    // A composite of: temp OK (40pts), voltage OK (20pts), level in range (40pts)
+    let longevityScore = 0;
+    if (!isHot && !isCold)  longevityScore += 40;
+    else if (isHot)          longevityScore += 10;
+    else                     longevityScore += 20;
+
+    if (!voltageStress)      longevityScore += 20;
+    else                     longevityScore += 5;
+
+    if (batteryLevel >= 20 && batteryLevel <= 80) longevityScore += 40;
+    else if (batteryLevel > 80)                   longevityScore += 20;
+    else                                           longevityScore += 5;
+
+    const barColor = longevityScore >= 70
+        ? 'linear-gradient(to right, #22c55e, #4ade80)'
+        : longevityScore >= 40
+        ? 'linear-gradient(to right, #eab308, #fde047)'
+        : 'linear-gradient(to right, #ef4444, #fca5a5)';
+
+    // ── Apply to DOM ──────────────────────────────────────────────
+    recEl.textContent           = recommendation;
+    iconEl.textContent          = icon;
+    cardRec.className           = 'charge-card ' + statusClass;
+
+    targetLvlEl.textContent     = targetLevel;
+    targetResEl.textContent     = targetReason;
+
+    timeEl.textContent          = timeText;
+    timeNoteEl.textContent      = timeNote;
+
+    thermalEl.textContent       = thermalStatus;
+    thermalNoteEl.textContent   = thermalNote;
+    thermalCard.className       = 'charge-card ' + thermalClass;
+
+    tipsList.innerHTML = tips.map(t => `<li>${t}</li>`).join('');
+
+    longevityBar.style.width      = longevityScore + '%';
+    longevityBar.style.background = barColor;
+    longevityPct.textContent      = longevityScore + '%';
 }
