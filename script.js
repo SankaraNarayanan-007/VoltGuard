@@ -87,41 +87,110 @@ function switchTab(tabId) {
 }
 
 // ---------------------------------------------------------------
-// SOH & RUL CALCULATION ENGINE
+// SOH & RUL CALCULATION ENGINE (Physics-based, Cumulative)
 // ---------------------------------------------------------------
+
+// Battery constants (LiFePO4 / Li-ion EV pack typical values)
+const V_MAX  = 4.2;    // Full charge voltage (V)
+const V_MIN  = 3.0;    // Cutoff voltage (V)
+const V_NOM  = 3.7;    // Nominal voltage (V)
+const TEMP_REF = 25;   // Reference temperature (°C)
+const BATTERY_DESIGN_CAPACITY = 100; // % — baseline
+const BATTERY_DESIGN_LIFE_CYCLES = 1500; // typical Li-ion cycle life
+const BATTERY_DESIGN_LIFE_YEARS  = 5;
+
+// Rolling history buffers (last 60 readings ≈ 1 min at 1Hz)
 const voltageHistory = [];
 const tempHistory    = [];
 const MAX_HISTORY    = 60;
 
-const V_MAX  = 4.2;
-const V_MIN  = 3.0;
-const BATTERY_DESIGN_LIFE_YEARS = 5;
+// Cumulative degradation accumulator (persists across readings)
+let cumulativeDegradation = 0; // in % capacity lost
+let cycleCount = 0;
+let prevVoltage = null;
+let chargingCycles = 0;
 
+/**
+ * SOH — State of Health
+ *
+ * Combines three degradation factors:
+ *  1. Voltage-based capacity fade (how far below V_MAX we sit)
+ *  2. Thermal stress (Arrhenius model: every 10°C above 25°C doubles degradation rate)
+ *  3. Cumulative cycle damage (estimated from voltage direction reversals)
+ *
+ * Returns 0–100 %
+ */
 function calculateSOH(voltage, temperature, batteryLevel) {
+    // ── Factor 1: Voltage capacity ratio ──────────────────────────
     const voltageRatio = Math.min(
         ((voltage - V_MIN) / (V_MAX - V_MIN)) * 100, 100
     );
-    const tempStress = temperature > 40
-        ? (temperature - 40) * 0.5
-        : temperature < 0 ? Math.abs(temperature) * 0.3 : 0;
 
-    const rawSOH = (voltageRatio * 0.5) + (batteryLevel * 0.5) - tempStress;
+    // ── Factor 2: Thermal stress (Arrhenius approximation) ────────
+    // Each 10°C above 25°C doubles the degradation rate → each reading
+    // contributes a tiny thermal degradation increment.
+    const tempDelta = temperature - TEMP_REF;
+    const arrheniusFactor = Math.pow(2, tempDelta / 10); // >1 if hot, <1 if cold
+    const thermalDegIncrement = (arrheniusFactor - 1) * 0.001; // per reading
+    cumulativeDegradation += Math.max(0, thermalDegIncrement);
+
+    // ── Factor 3: Charge cycle counting ───────────────────────────
+    // Detect a new charge cycle when voltage reverses from falling to rising
+    if (prevVoltage !== null) {
+        if (voltage > prevVoltage + 0.05) {  // rising edge = charging started
+            cycleCount++;
+            // Each cycle degrades capacity by (100 / design_cycles) %
+            cumulativeDegradation += (100 / BATTERY_DESIGN_LIFE_CYCLES);
+        }
+    }
+    prevVoltage = voltage;
+
+    // ── Composite SOH ─────────────────────────────────────────────
+    // Weighted blend: 50% real-time voltage + 35% battery level + 15% cumulative loss
+    const rawSOH =
+        (voltageRatio    * 0.50) +
+        (batteryLevel    * 0.35) -
+        (cumulativeDegradation * 0.15);
+
     return Math.max(0, Math.min(100, rawSOH)).toFixed(1);
 }
 
+/**
+ * RUL — Remaining Useful Life (in years)
+ *
+ * Uses:
+ *  1. How much SOH remains above the End-of-Life threshold (80%)
+ *  2. Rolling average thermal acceleration factor
+ *  3. Voltage stress factor (high/low voltage accelerates aging)
+ *
+ * Returns years remaining
+ */
 function calculateRUL(soh, temperature, voltage) {
     voltageHistory.push(voltage);
     tempHistory.push(temperature);
     if (voltageHistory.length > MAX_HISTORY) voltageHistory.shift();
-    if (tempHistory.length > MAX_HISTORY) tempHistory.shift();
+    if (tempHistory.length   > MAX_HISTORY) tempHistory.shift();
 
+    // ── Rolling average thermal acceleration ──────────────────────
     const avgTemp = tempHistory.reduce((a, b) => a + b, 0) / tempHistory.length;
-    const thermalFactor = avgTemp > 35
-        ? 1 + ((avgTemp - 35) * 0.04)
-        : avgTemp < 10 ? 1 + ((10 - avgTemp) * 0.02) : 1.0;
+    // Arrhenius: aging doubles per 10°C above reference
+    const thermalAccel = Math.pow(2, (avgTemp - TEMP_REF) / 10);
 
-    const remainingHealth = Math.max(0, soh - 80);
-    const rulYears = (remainingHealth / 100) * BATTERY_DESIGN_LIFE_YEARS / thermalFactor;
+    // ── Voltage stress factor ─────────────────────────────────────
+    // Operating near V_MAX or V_MIN accelerates degradation
+    const vCenter = (V_MAX + V_MIN) / 2;  // 3.6V ideal midpoint
+    const vDeviation = Math.abs(voltage - vCenter) / (V_MAX - V_MIN);
+    const voltageStress = 1 + (vDeviation * 0.5); // up to 1.5× if at extremes
+
+    // ── RUL calculation ───────────────────────────────────────────
+    // EOL threshold = 80% SOH (industry standard for EV batteries)
+    const healthRemaining = Math.max(0, parseFloat(soh) - 80);
+    const totalUsable     = 100 - 80; // = 20 points of usable SOH range
+
+    const healthFraction = healthRemaining / totalUsable;
+    const rulYears = (healthFraction * BATTERY_DESIGN_LIFE_YEARS)
+                     / (thermalAccel * voltageStress);
+
     return Math.max(0, rulYears).toFixed(2);
 }
 
