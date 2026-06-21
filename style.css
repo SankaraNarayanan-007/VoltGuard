@@ -16,12 +16,13 @@ body {
 /* CAR IMAGE BACKGROUND */
 .car-bg {
     position: fixed;
-    bottom: -8%;             /* Lowered from 0 to push the graphic down past the bottom edge */
-    left: 62%;
+    bottom: -24%;
+    /* sidebar(280px) + gap(20px) + left-pad(20px) = 320px; center of right panel */
+    left: calc(320px + (100vw - 340px) / 2);
     transform: translateX(-50%);
-    width: 72%;
+    width: calc(100vw - 340px);
     height: auto;
-    z-index: 4;
+    z-index: 6;
     pointer-events: none;
     mix-blend-mode: screen;
     opacity: 0.85;
