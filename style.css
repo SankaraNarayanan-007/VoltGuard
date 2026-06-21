@@ -271,3 +271,49 @@ h2 svg {
     color: #a855f7;
     filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
 }
+
+/* USER BAR */
+.user-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 4px 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 16px;
+}
+
+.user-name {
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+}
+
+.logout-btn {
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.3);
+    color: #f87171;
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.logout-btn:hover {
+    background: rgba(239,68,68,0.3);
+    color: white;
+}
+
+/* SVG icons in headings */
+h2 {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+h2 svg {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    color: #a855f7;
+    filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
+}

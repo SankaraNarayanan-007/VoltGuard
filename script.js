@@ -1,7 +1,76 @@
-// Replace with the IP address printed in your Wokwi serial terminal
-const ESP32_IP = "localhost:9080";
+// ---------------------------------------------------------------
+// SESSION GUARD — redirect to login if not authenticated
+// ---------------------------------------------------------------
+const session = JSON.parse(localStorage.getItem('voltguard_session') || 'null');
+if (!session) {
+    window.location.href = 'login.html';
+}
 
-// TABS SYSTEM FOR THE SINGLE PAGE ENGINE
+// Inject user greeting + logout button into sidebar brand area
+window.addEventListener('DOMContentLoaded', () => {
+    const brand = document.querySelector('.brand');
+    if (brand && session) {
+        const userBar = document.createElement('div');
+        userBar.className = 'user-bar';
+        userBar.innerHTML = `
+            <span class="user-name">👤 ${session.name}</span>
+            <button class="logout-btn" onclick="handleLogout()">Sign Out</button>
+        `;
+        brand.parentElement.insertBefore(userBar, brand.nextSibling);
+    }
+
+    // Request notification permission on load
+    requestNotificationPermission();
+});
+
+function handleLogout() {
+    localStorage.removeItem('voltguard_session');
+    window.location.href = 'login.html';
+}
+
+// ---------------------------------------------------------------
+// BROWSER PUSH NOTIFICATIONS
+// ---------------------------------------------------------------
+let notificationPermission = false;
+let lastNotifiedStatus = null; // prevent repeat spam
+
+function requestNotificationPermission() {
+    if (!('Notification' in window)) return;
+
+    if (Notification.permission === 'granted') {
+        notificationPermission = true;
+    } else if (Notification.permission !== 'denied') {
+        Notification.requestPermission().then(permission => {
+            notificationPermission = permission === 'granted';
+        });
+    }
+}
+
+function sendNotification(title, body, type = 'warning') {
+    if (!notificationPermission) return;
+
+    // Don't spam same status repeatedly
+    if (lastNotifiedStatus === type) return;
+    lastNotifiedStatus = type;
+
+    const icons = {
+        alert:   '🔴',
+        warning: '🟡',
+        normal:  '🟢'
+    };
+
+    new Notification(`${icons[type]} VoltGuard AI — ${title}`, {
+        body,
+        icon: 'car-bg.png',
+        badge: 'car-bg.png',
+        tag: 'voltguard-alert',   // replaces previous notification instead of stacking
+        renotify: true
+    });
+}
+
+// ---------------------------------------------------------------
+// TABS SYSTEM
+// ---------------------------------------------------------------
 function switchTab(tabId) {
     document.querySelectorAll('.nav-item').forEach(btn =>
         btn.classList.remove('active')
@@ -17,78 +86,56 @@ function switchTab(tabId) {
     if (targetPanel) targetPanel.classList.add('active');
 }
 
-// --------------------------------------------------------------------
-// SOH & RUL Calculation Engine
-// --------------------------------------------------------------------
-
-// Rolling history for degradation tracking
+// ---------------------------------------------------------------
+// SOH & RUL CALCULATION ENGINE
+// ---------------------------------------------------------------
 const voltageHistory = [];
-const tempHistory = [];
-const MAX_HISTORY = 60; // last 60 readings
+const tempHistory    = [];
+const MAX_HISTORY    = 60;
 
-// Battery design specs (tune to your battery)
-const V_NOMINAL = 3.7;   // nominal voltage
-const V_MAX     = 4.2;   // fully charged
-const V_MIN     = 3.0;   // cutoff voltage
-const TEMP_OPTIMAL = 25; // optimal temp in °C
-const BATTERY_DESIGN_LIFE_YEARS = 5; // expected lifespan at ideal conditions
+const V_MAX  = 4.2;
+const V_MIN  = 3.0;
+const BATTERY_DESIGN_LIFE_YEARS = 5;
 
 function calculateSOH(voltage, temperature, batteryLevel) {
-    // SOH based on voltage deviation from nominal + thermal stress factor
     const voltageRatio = Math.min(
-        ((voltage - V_MIN) / (V_MAX - V_MIN)) * 100,
-        100
+        ((voltage - V_MIN) / (V_MAX - V_MIN)) * 100, 100
     );
-
-    // Thermal stress: every degree above 40°C or below 0°C degrades SOH
     const tempStress = temperature > 40
         ? (temperature - 40) * 0.5
-        : temperature < 0
-            ? Math.abs(temperature) * 0.3
-            : 0;
+        : temperature < 0 ? Math.abs(temperature) * 0.3 : 0;
 
-    // Combine voltage health + battery level + thermal penalty
     const rawSOH = (voltageRatio * 0.5) + (batteryLevel * 0.5) - tempStress;
     return Math.max(0, Math.min(100, rawSOH)).toFixed(1);
 }
 
 function calculateRUL(soh, temperature, voltage) {
-    // Track degradation rate using recent voltage history
     voltageHistory.push(voltage);
     tempHistory.push(temperature);
     if (voltageHistory.length > MAX_HISTORY) voltageHistory.shift();
     if (tempHistory.length > MAX_HISTORY) tempHistory.shift();
 
-    // Degradation rate: how fast SOH is declining
-    // Higher temp = faster degradation (Arrhenius approximation)
     const avgTemp = tempHistory.reduce((a, b) => a + b, 0) / tempHistory.length;
     const thermalFactor = avgTemp > 35
-        ? 1 + ((avgTemp - 35) * 0.04)  // accelerated aging above 35°C
-        : avgTemp < 10
-            ? 1 + ((10 - avgTemp) * 0.02)
-            : 1.0;
+        ? 1 + ((avgTemp - 35) * 0.04)
+        : avgTemp < 10 ? 1 + ((10 - avgTemp) * 0.02) : 1.0;
 
-    // RUL = remaining % of SOH above 80% threshold / degradation rate
-    // 80% SOH is typically considered end-of-life for EV batteries
-    const SOH_EOL = 80;
-    const remainingHealth = Math.max(0, soh - SOH_EOL);
+    const remainingHealth = Math.max(0, soh - 80);
     const rulYears = (remainingHealth / 100) * BATTERY_DESIGN_LIFE_YEARS / thermalFactor;
-
     return Math.max(0, rulYears).toFixed(2);
 }
 
-// --------------------------------------------------------------------
-// Real-time Cloud MQTT Subscription Setup
-// --------------------------------------------------------------------
-
+// ---------------------------------------------------------------
+// MQTT — Secure WebSocket for HTTPS (Vercel)
+// ---------------------------------------------------------------
 const client = new Paho.MQTT.Client(
     "broker.hivemq.com",
-    Number(8884),           // 8884 = WSS (secure WebSocket) for HTTPS pages
+    Number(8884),
     "voltguard_dashboard_ui_" + Math.floor(Math.random() * 10000)
 );
 
 client.onConnectionLost = (responseObject) => {
-    console.warn("MQTT Connection Lost. Attempting reconnection...");
+    console.warn("MQTT Connection Lost. Reconnecting...");
     if (responseObject.errorCode !== 0) {
         setTimeout(() => client.connect({ onSuccess: onConnect, useSSL: true }), 3000);
     }
@@ -97,37 +144,35 @@ client.onConnectionLost = (responseObject) => {
 client.onMessageArrived = (message) => {
     try {
         const data = JSON.parse(message.payloadString);
-        console.log("Real-time telemetry frame arrived:", data);
+        console.log("Telemetry received:", data);
         localStorage.setItem("voltguard_data", JSON.stringify(data));
         updateUIElements(data);
     } catch (e) {
-        console.error("Malformed message frame content arrived:", e);
+        console.error("Malformed MQTT message:", e);
     }
 };
 
 function onConnect() {
-    console.log("Connected to Cloud Broker! Subscribed to live telemetry feed.");
+    console.log("Connected to HiveMQ broker.");
     client.subscribe("voltguard/telemetry/data");
 }
 
 client.connect({
     onSuccess: onConnect,
-    useSSL: true,           // SSL required on HTTPS (Vercel)
+    useSSL: true,
     cleanSession: true
 });
 
-// --------------------------------------------------------------------
-// UI Update Engine
-// --------------------------------------------------------------------
-
+// ---------------------------------------------------------------
+// UI UPDATE ENGINE
+// ---------------------------------------------------------------
 function updateUIElements(data) {
-
-    const voltage     = parseFloat(data.voltage);
-    const temperature = parseFloat(data.temperature);
-    const humidity    = parseFloat(data.humidity);
+    const voltage      = parseFloat(data.voltage);
+    const temperature  = parseFloat(data.temperature);
+    const humidity     = parseFloat(data.humidity);
     const batteryLevel = parseFloat(data.batteryLevel);
 
-    // 1. Telemetry Screen
+    // 1. Telemetry
     const voltText = document.getElementById("main-voltage");
     const tempText = document.getElementById("main-temp");
     const humText  = document.getElementById("main-hum");
@@ -150,30 +195,30 @@ function updateUIElements(data) {
         }
     }
 
-    // 3. SOH — calculated from live data
-    const soh = calculateSOH(voltage, temperature, batteryLevel);
+    // 3. SOH
+    const soh   = calculateSOH(voltage, temperature, batteryLevel);
     const sohEl = document.getElementById("soh-value");
     if (sohEl) sohEl.innerText = `${soh}%`;
 
-    // 4. RUL — calculated from SOH + thermal history
-    const rul = calculateRUL(parseFloat(soh), temperature, voltage);
+    // 4. RUL
+    const rul   = calculateRUL(parseFloat(soh), temperature, voltage);
     const rulEl = document.getElementById("rul-value");
     if (rulEl) rulEl.innerText = `${rul} Years`;
 
-    // 5. Risk Assessment
+    // 5. Risk
     const riskStatusBox = document.getElementById("risk-visual-box");
     const riskLevelText = document.getElementById("risk-level-text");
     if (riskStatusBox && riskLevelText) {
         riskLevelText.innerText = `${data.status} RISK`;
         if (data.status === "ALERT") {
-            riskStatusBox.style.background  = "#ef4444";
-            riskStatusBox.style.boxShadow   = "0 0 20px #ef4444";
+            riskStatusBox.style.background = "#ef4444";
+            riskStatusBox.style.boxShadow  = "0 0 20px #ef4444";
         } else if (data.status === "WARNING") {
-            riskStatusBox.style.background  = "#eab308";
-            riskStatusBox.style.boxShadow   = "0 0 20px #eab308";
+            riskStatusBox.style.background = "#eab308";
+            riskStatusBox.style.boxShadow  = "0 0 20px #eab308";
         } else {
-            riskStatusBox.style.background  = "#22c55e";
-            riskStatusBox.style.boxShadow   = "0 0 20px #22c55e";
+            riskStatusBox.style.background = "#22c55e";
+            riskStatusBox.style.boxShadow  = "0 0 20px #22c55e";
         }
     }
 
@@ -181,10 +226,26 @@ function updateUIElements(data) {
     const aiVerdictText = document.getElementById("ai-verdict");
     if (aiVerdictText) {
         aiVerdictText.innerText =
-            data.status === "ALERT"
-                ? "Critical Outlier State Detected"
-                : data.status === "WARNING"
-                    ? "Warning: Non-Normative Stress Signs"
-                    : "System Environment Normal";
+            data.status === "ALERT"   ? "Critical Outlier State Detected" :
+            data.status === "WARNING" ? "Warning: Non-Normative Stress Signs" :
+                                        "System Environment Normal";
+    }
+
+    // 7. Browser push notifications based on status
+    if (data.status === "ALERT") {
+        sendNotification(
+            "Critical Alert",
+            `Voltage: ${voltage.toFixed(1)}V | Temp: ${temperature.toFixed(1)}°C | Battery: ${batteryLevel.toFixed(1)}% — Immediate attention required!`,
+            "alert"
+        );
+    } else if (data.status === "WARNING") {
+        sendNotification(
+            "Warning Detected",
+            `Voltage: ${voltage.toFixed(1)}V | Temp: ${temperature.toFixed(1)}°C — Non-normal stress signs detected.`,
+            "warning"
+        );
+    } else {
+        // Reset so normal→alert triggers again
+        if (lastNotifiedStatus !== null) lastNotifiedStatus = null;
     }
 }
