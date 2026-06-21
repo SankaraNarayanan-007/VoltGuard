@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>VoltGuard AI Dashboard</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js" type="text/javascript"></script>
 </head>
 <body>
 
@@ -55,15 +55,15 @@
                 <div class="metrics-grid">
                     <div class="metric-card">
                         <h3>Simulated Voltage</h3>
-                        <p id="main-voltage" class="metric-value">0.0V</p>
+                        <p id="main-voltage" class="metric-value">--</p>
                     </div>
                     <div class="metric-card">
                         <h3>Temperature</h3>
-                        <p id="main-temp" class="metric-value">0.0°C</p>
+                        <p id="main-temp" class="metric-value">--</p>
                     </div>
                     <div class="metric-card">
                         <h3>Humidity</h3>
-                        <p id="main-hum" class="metric-value">0.0%</p>
+                        <p id="main-hum" class="metric-value">--</p>
                     </div>
                 </div>
             </section>
@@ -78,7 +78,7 @@
                         <div id="battery-fill-bar" class="battery-fill"></div>
                     </div>
                     <div class="status-readout">
-                        <h3 id="health-percentage">--%</h3>
+                        <h3 id="health-percentage">--</h3>
                         <p>Remaining calculated chemical energy capacity before critical failure threshold.</p>
                     </div>
                 </div>
@@ -120,7 +120,7 @@
                 <div class="view-flex">
                     <div id="risk-visual-box" class="risk-box"></div>
                     <div class="status-readout">
-                        <h3 id="risk-level-text">Evaluating...</h3>
+                        <h3 id="risk-level-text">--</h3>
                         <p>Real-time classification inferred from anomalous operational spikes.</p>
                     </div>
                 </div>
@@ -134,7 +134,7 @@
                 <div class="view-flex">
                     <div class="ai-scan"></div>
                     <div class="status-readout">
-                        <h3 id="ai-verdict">Running Diagnostics...</h3>
+                        <h3 id="ai-verdict">--</h3>
                         <p>Continuous validation check tracking electrical deviations.</p>
                     </div>
                 </div>

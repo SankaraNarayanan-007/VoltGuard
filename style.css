@@ -13,7 +13,6 @@ body {
     z-index: -2;
 }
 
-/* CAR IMAGE BACKGROUND */
 .car-bg {
     position: fixed;
     bottom: 0;
@@ -24,7 +23,6 @@ body {
     pointer-events: none;
     mix-blend-mode: screen;
     opacity: 0.75;
-
 }
 
 .dashboard-container {
@@ -35,7 +33,7 @@ body {
     box-sizing: border-box;
     gap: 20px;
     position: relative;
-    z-index: 3;
+    z-index: 5;
 }
 
 .glass {
@@ -135,6 +133,17 @@ h2 {
     border-bottom: 2px solid rgba(255, 255, 255, 0.05);
     padding-bottom: 15px;
     margin-bottom: 30px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+h2 svg {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    color: #a855f7;
+    filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
 }
 
 .metrics-grid {
@@ -256,64 +265,3 @@ h2 {
 @keyframes spin { 100% { transform: rotate(360deg); } }
 @keyframes scan { 0% { top: 0%; } 50% { top: 100%; } 100% { top: 0%; } }
 @keyframes pulseGlow { from { transform: scale(0.95); opacity: 0.5; } to { transform: scale(1.05); opacity: 0.8; } }
-
-/* SVG icons in headings */
-h2 {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-h2 svg {
-    width: 26px;
-    height: 26px;
-    flex-shrink: 0;
-    color: #a855f7;
-    filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
-}
-
-/* USER BAR */
-.user-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 4px 18px;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-    margin-bottom: 16px;
-}
-
-.user-name {
-    font-size: 13px;
-    color: rgba(255,255,255,0.6);
-}
-
-.logout-btn {
-    background: rgba(239,68,68,0.15);
-    border: 1px solid rgba(239,68,68,0.3);
-    color: #f87171;
-    font-size: 12px;
-    padding: 5px 12px;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s;
-}
-
-.logout-btn:hover {
-    background: rgba(239,68,68,0.3);
-    color: white;
-}
-
-/* SVG icons in headings */
-h2 {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-h2 svg {
-    width: 26px;
-    height: 26px;
-    flex-shrink: 0;
-    color: #a855f7;
-    filter: drop-shadow(0 0 6px rgba(168,85,247,0.6));
-}

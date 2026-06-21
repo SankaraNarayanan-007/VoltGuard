@@ -1,251 +1,210 @@
-// ---------------------------------------------------------------
-// SESSION GUARD — redirect to login if not authenticated
-// ---------------------------------------------------------------
-const session = JSON.parse(localStorage.getItem('voltguard_session') || 'null');
-if (!session) {
-    window.location.href = 'login.html';
-}
+// Replace with the IP address printed in your Wokwi serial terminal
+const ESP32_IP = "localhost:9080";
 
-// Inject user greeting + logout button into sidebar brand area
-window.addEventListener('DOMContentLoaded', () => {
-    const brand = document.querySelector('.brand');
-    if (brand && session) {
-        const userBar = document.createElement('div');
-        userBar.className = 'user-bar';
-        userBar.innerHTML = `
-            <span class="user-name">👤 ${session.name}</span>
-            <button class="logout-btn" onclick="handleLogout()">Sign Out</button>
-        `;
-        brand.parentElement.insertBefore(userBar, brand.nextSibling);
-    }
-
-    // Request notification permission on load
-    requestNotificationPermission();
-});
-
-function handleLogout() {
-    localStorage.removeItem('voltguard_session');
-    window.location.href = 'login.html';
-}
-
-// ---------------------------------------------------------------
-// BROWSER PUSH NOTIFICATIONS
-// ---------------------------------------------------------------
-let notificationPermission = false;
-let lastNotifiedStatus = null; // prevent repeat spam
-
-function requestNotificationPermission() {
-    if (!('Notification' in window)) return;
-
-    if (Notification.permission === 'granted') {
-        notificationPermission = true;
-    } else if (Notification.permission !== 'denied') {
-        Notification.requestPermission().then(permission => {
-            notificationPermission = permission === 'granted';
-        });
-    }
-}
-
-function sendNotification(title, body, type = 'warning') {
-    if (!notificationPermission) return;
-
-    // Don't spam same status repeatedly
-    if (lastNotifiedStatus === type) return;
-    lastNotifiedStatus = type;
-
-    const icons = {
-        alert:   '🔴',
-        warning: '🟡',
-        normal:  '🟢'
-    };
-
-    new Notification(`${icons[type]} VoltGuard AI — ${title}`, {
-        body,
-        icon: 'car-bg.png',
-        badge: 'car-bg.png',
-        tag: 'voltguard-alert',   // replaces previous notification instead of stacking
-        renotify: true
-    });
-}
-
-// ---------------------------------------------------------------
-// TABS SYSTEM
-// ---------------------------------------------------------------
+// TABS SYSTEM FOR THE SINGLE PAGE ENGINE
 function switchTab(tabId) {
+    // Remove active classes from all nav buttons
     document.querySelectorAll('.nav-item').forEach(btn =>
         btn.classList.remove('active')
     );
+
+    // Remove active classes from all section panels
     document.querySelectorAll('.tab-content').forEach(content =>
         content.classList.remove('active')
     );
+
+    // Activate the clicked button element
     const selectedButton = Array.from(
         document.querySelectorAll('.nav-item')
     ).find(btn => btn.getAttribute('onclick').includes(tabId));
-    if (selectedButton) selectedButton.classList.add('active');
+
+    if (selectedButton) {
+        selectedButton.classList.add('active');
+    }
+
+    // Show corresponding page view container
     const targetPanel = document.getElementById(tabId);
-    if (targetPanel) targetPanel.classList.add('active');
+
+    if (targetPanel) {
+        targetPanel.classList.add('active');
+    }
 }
 
-// ---------------------------------------------------------------
-// SOH & RUL CALCULATION ENGINE
-// ---------------------------------------------------------------
-const voltageHistory = [];
-const tempHistory    = [];
-const MAX_HISTORY    = 60;
+// --------------------------------------------------------------------
+// Real-time Cloud MQTT Subscription Setup
+// --------------------------------------------------------------------
 
-const V_MAX  = 4.2;
-const V_MIN  = 3.0;
-const BATTERY_DESIGN_LIFE_YEARS = 5;
-
-function calculateSOH(voltage, temperature, batteryLevel) {
-    const voltageRatio = Math.min(
-        ((voltage - V_MIN) / (V_MAX - V_MIN)) * 100, 100
-    );
-    const tempStress = temperature > 40
-        ? (temperature - 40) * 0.5
-        : temperature < 0 ? Math.abs(temperature) * 0.3 : 0;
-
-    const rawSOH = (voltageRatio * 0.5) + (batteryLevel * 0.5) - tempStress;
-    return Math.max(0, Math.min(100, rawSOH)).toFixed(1);
-}
-
-function calculateRUL(soh, temperature, voltage) {
-    voltageHistory.push(voltage);
-    tempHistory.push(temperature);
-    if (voltageHistory.length > MAX_HISTORY) voltageHistory.shift();
-    if (tempHistory.length > MAX_HISTORY) tempHistory.shift();
-
-    const avgTemp = tempHistory.reduce((a, b) => a + b, 0) / tempHistory.length;
-    const thermalFactor = avgTemp > 35
-        ? 1 + ((avgTemp - 35) * 0.04)
-        : avgTemp < 10 ? 1 + ((10 - avgTemp) * 0.02) : 1.0;
-
-    const remainingHealth = Math.max(0, soh - 80);
-    const rulYears = (remainingHealth / 100) * BATTERY_DESIGN_LIFE_YEARS / thermalFactor;
-    return Math.max(0, rulYears).toFixed(2);
-}
-
-// ---------------------------------------------------------------
-// MQTT — Secure WebSocket for HTTPS (Vercel)
-// ---------------------------------------------------------------
+// Connect via WebSocket port 8000 to the public HiveMQ Broker
 const client = new Paho.MQTT.Client(
     "broker.hivemq.com",
-    Number(8884),
+    Number(8000),
     "voltguard_dashboard_ui_" + Math.floor(Math.random() * 10000)
 );
 
 client.onConnectionLost = (responseObject) => {
-    console.warn("MQTT Connection Lost. Reconnecting...");
+    console.warn("MQTT Connection Lost. Attempting reconnection...");
+
     if (responseObject.errorCode !== 0) {
-        setTimeout(() => client.connect({ onSuccess: onConnect, useSSL: true }), 3000);
+        setTimeout(() => {
+            client.connect({
+                onSuccess: onConnect
+            });
+        }, 3000);
     }
 };
 
 client.onMessageArrived = (message) => {
     try {
+        // Parse the incoming string payload pushed from the ESP32
         const data = JSON.parse(message.payloadString);
-        console.log("Telemetry received:", data);
-        localStorage.setItem("voltguard_data", JSON.stringify(data));
+
+        console.log("Real-time telemetry frame arrived:", data);
+
+        // Cache data context locally
+        localStorage.setItem(
+            "voltguard_data",
+            JSON.stringify(data)
+        );
+
+        // Push parsed keys down to dashboard elements
         updateUIElements(data);
+
     } catch (e) {
-        console.error("Malformed MQTT message:", e);
+        console.error(
+            "Malformed message frame content arrived:",
+            e
+        );
     }
 };
 
+// Callback when browser establishes socket channel
 function onConnect() {
-    console.log("Connected to HiveMQ broker.");
+    console.log(
+        "Connected to Cloud Broker! Subscribed to live telemetry feed."
+    );
+
     client.subscribe("voltguard/telemetry/data");
 }
 
+// Initialize connection automatically
 client.connect({
     onSuccess: onConnect,
-    useSSL: true,
+    useSSL: false,
     cleanSession: true
 });
 
-// ---------------------------------------------------------------
-// UI UPDATE ENGINE
-// ---------------------------------------------------------------
-function updateUIElements(data) {
-    const voltage      = parseFloat(data.voltage);
-    const temperature  = parseFloat(data.temperature);
-    const humidity     = parseFloat(data.humidity);
-    const batteryLevel = parseFloat(data.batteryLevel);
+// --------------------------------------------------------------------
+// UI Update Engine
+// --------------------------------------------------------------------
 
-    // 1. Telemetry
+function updateUIElements(data) {
+
+    // 1. Update Core Metric Fields (Telemetry Screen)
     const voltText = document.getElementById("main-voltage");
     const tempText = document.getElementById("main-temp");
-    const humText  = document.getElementById("main-hum");
-    if (voltText) voltText.innerText = `${voltage.toFixed(1)}V`;
-    if (tempText) tempText.innerText = `${temperature.toFixed(1)}°C`;
-    if (humText)  humText.innerText  = `${humidity.toFixed(1)}%`;
+    const humText = document.getElementById("main-hum");
 
-    // 2. Battery Health
-    const healthPercent  = document.getElementById("health-percentage");
-    const batteryBarFill = document.getElementById("battery-fill-bar");
+    // Matched keys with MicroPython payload structure
+    if (voltText) {
+        voltText.innerText =
+            `${parseFloat(data.voltage).toFixed(1)}V`;
+    }
+
+    if (tempText) {
+        tempText.innerText =
+            `${parseFloat(data.temperature).toFixed(1)}°C`;
+    }
+
+    if (humText) {
+        humText.innerText =
+            `${parseFloat(data.humidity).toFixed(1)}%`;
+    }
+
+    // --------------------------------------------------------------
+    // 2. Dynamic Component Adjustments (Battery Health Page)
+    // --------------------------------------------------------------
+
+    const healthPercent =
+        document.getElementById("health-percentage");
+
+    const batteryBarFill =
+        document.getElementById("battery-fill-bar");
+
     if (healthPercent && batteryBarFill) {
-        healthPercent.innerText = `${batteryLevel.toFixed(1)}%`;
-        batteryBarFill.style.height = `${batteryLevel}%`;
-        if (batteryLevel > 70) {
-            batteryBarFill.style.background = "linear-gradient(to top, #22c55e, #4ade80)";
-        } else if (batteryLevel > 40) {
-            batteryBarFill.style.background = "linear-gradient(to top, #eab308, #fde047)";
+
+        // Matched key with MicroPython payload structure
+        const fixedHealth =
+            parseFloat(data.batteryLevel).toFixed(1);
+
+        healthPercent.innerText = `${fixedHealth}%`;
+        batteryBarFill.style.height = `${fixedHealth}%`;
+
+        // Dynamic Health Color Grading
+        if (fixedHealth > 70) {
+            batteryBarFill.style.background =
+                "linear-gradient(to top, #22c55e, #4ade80)";
+
+        } else if (fixedHealth > 40) {
+            batteryBarFill.style.background =
+                "linear-gradient(to top, #eab308, #fde047)";
+
         } else {
-            batteryBarFill.style.background = "linear-gradient(to top, #ef4444, #fca5a5)";
+            batteryBarFill.style.background =
+                "linear-gradient(to top, #ef4444, #fca5a5)";
         }
     }
 
-    // 3. SOH
-    const soh   = calculateSOH(voltage, temperature, batteryLevel);
-    const sohEl = document.getElementById("soh-value");
-    if (sohEl) sohEl.innerText = `${soh}%`;
+    // --------------------------------------------------------------
+    // 3. Dynamic Threshold Styling (Risk Assessment Page)
+    // --------------------------------------------------------------
 
-    // 4. RUL
-    const rul   = calculateRUL(parseFloat(soh), temperature, voltage);
-    const rulEl = document.getElementById("rul-value");
-    if (rulEl) rulEl.innerText = `${rul} Years`;
+    const riskStatusBox =
+        document.getElementById("risk-visual-box");
 
-    // 5. Risk
-    const riskStatusBox = document.getElementById("risk-visual-box");
-    const riskLevelText = document.getElementById("risk-level-text");
+    const riskLevelText =
+        document.getElementById("risk-level-text");
+
     if (riskStatusBox && riskLevelText) {
+
         riskLevelText.innerText = `${data.status} RISK`;
+
         if (data.status === "ALERT") {
+
             riskStatusBox.style.background = "#ef4444";
-            riskStatusBox.style.boxShadow  = "0 0 20px #ef4444";
+            riskStatusBox.style.boxShadow =
+                "0 0 20px #ef4444";
+
         } else if (data.status === "WARNING") {
+
             riskStatusBox.style.background = "#eab308";
-            riskStatusBox.style.boxShadow  = "0 0 20px #eab308";
+            riskStatusBox.style.boxShadow =
+                "0 0 20px #eab308";
+
         } else {
+
             riskStatusBox.style.background = "#22c55e";
-            riskStatusBox.style.boxShadow  = "0 0 20px #22c55e";
+            riskStatusBox.style.boxShadow =
+                "0 0 20px #22c55e";
         }
     }
 
-    // 6. AI Diagnostics
-    const aiVerdictText = document.getElementById("ai-verdict");
-    if (aiVerdictText) {
-        aiVerdictText.innerText =
-            data.status === "ALERT"   ? "Critical Outlier State Detected" :
-            data.status === "WARNING" ? "Warning: Non-Normative Stress Signs" :
-                                        "System Environment Normal";
-    }
+    // --------------------------------------------------------------
+    // 4. Inferred Prognostics Engine UI (AI Insights Page)
+    // --------------------------------------------------------------
 
-    // 7. Browser push notifications based on status
-    if (data.status === "ALERT") {
-        sendNotification(
-            "Critical Alert",
-            `Voltage: ${voltage.toFixed(1)}V | Temp: ${temperature.toFixed(1)}°C | Battery: ${batteryLevel.toFixed(1)}% — Immediate attention required!`,
-            "alert"
-        );
-    } else if (data.status === "WARNING") {
-        sendNotification(
-            "Warning Detected",
-            `Voltage: ${voltage.toFixed(1)}V | Temp: ${temperature.toFixed(1)}°C — Non-normal stress signs detected.`,
-            "warning"
-        );
-    } else {
-        // Reset so normal→alert triggers again
-        if (lastNotifiedStatus !== null) lastNotifiedStatus = null;
+    const aiVerdictText =
+        document.getElementById("ai-verdict");
+
+    if (aiVerdictText) {
+
+        aiVerdictText.innerText =
+            data.status === "ALERT"
+                ? "Critical Outlier State Detected"
+                : data.status === "WARNING"
+                    ? "Warning: Non-Normative Stress Signs"
+                    : "System Environment Normal";
     }
 }
+
+// Removed old fetchTelemetry loops since data is now
+// delivered directly through client.onMessageArrived
