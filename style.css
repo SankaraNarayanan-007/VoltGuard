@@ -13,16 +13,18 @@ body {
     z-index: -2;
 }
 
+/* CAR IMAGE BACKGROUND */
 .car-bg {
     position: fixed;
-    bottom: 0;
-    right: 0;
+    bottom: -8%;             /* Lowered from 0 to push the graphic down past the bottom edge */
+    left: 62%;
+    transform: translateX(-50%);
     width: 72%;
     height: auto;
     z-index: 4;
     pointer-events: none;
     mix-blend-mode: screen;
-    opacity: 0.75;
+    opacity: 0.85;
 }
 
 .dashboard-container {
